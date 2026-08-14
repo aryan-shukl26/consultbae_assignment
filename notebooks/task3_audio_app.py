@@ -1,0 +1,555 @@
+!pip install -q pydub
+!apt-get install -y ffmpeg -q
+
+def handle_submission(conn, name, phone, filepath, duration, sample_rate, bitrate, loudness):
+    try:
+        row = conn.execute("SELECT person_id FROM person WHERE phone = ?", (phone,)).fetchone()
+        if row:
+            person_id = row["person_id"]
+        else:
+            cur = conn.execute(
+                "INSERT INTO person (canonical_name, phone, match_confidence) VALUES (?, ?, 'new_from_audio_app')",
+                (name, phone)
+            )
+            person_id = cur.lastrowid
+
+        conn.execute("""
+            INSERT INTO audio_submission (person_id, file_path, duration_sec, sample_rate_khz, bitrate, loudness_db)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (person_id, filepath, duration, sample_rate, bitrate, loudness))
+
+        conn.commit()  # only commit once BOTH succeed
+        return person_id
+    except Exception:
+        conn.rollback()  # undo the person insert too if anything fails
+        raise
+
+import sqlite3
+conn = sqlite3.connect('/content/consultbae.db')
+cur = conn.cursor()
+cur.execute("""
+CREATE TABLE IF NOT EXISTS audio_submission (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER REFERENCES person(person_id),
+    file_path TEXT,
+    duration_sec REAL,
+    sample_rate_khz REAL,
+    bitrate INTEGER,
+    loudness_db REAL,
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+conn.commit()
+conn.close()
+print("audio_submission table ready.")
+
+from flask import Flask, render_template_string, request, jsonify, send_from_directory
+from threading import Thread
+import os
+import sqlite3
+from datetime import datetime
+from pydub import AudioSegment
+
+app = Flask(__name__)
+
+DB_PATH = "/content/consultbae.db"
+UPLOAD_DIR = "/content/audio_submissions"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+# =============================================================================
+# Audio property extraction — the core "figure it out" part of Task 3
+# =============================================================================
+
+def extract_audio_properties(filepath):
+    """
+    Returns (duration_sec, sample_rate_khz, bitrate, loudness_db, quality_note).
+    Uses pydub (backed by ffmpeg), which handles webm/mp3/wav/m4a transparently.
+    """
+    audio = AudioSegment.from_file(filepath)
+
+    duration_sec = round(len(audio) / 1000.0, 2)
+    sample_rate_khz = round(audio.frame_rate / 1000.0, 2)
+    # approximate bitrate: sample_rate * bit_depth * channels
+    bitrate = int(audio.frame_rate * audio.sample_width * 8 * audio.channels)
+    loudness_db = round(audio.dBFS, 2) if audio.dBFS != float('-inf') else None
+
+    # --- bonus: rough noise/quality estimate ---
+    # dBFS is measured relative to the loudest possible signal (0 dBFS = max).
+    # Real-world speech recordings typically sit around -20 to -10 dBFS.
+    # Very quiet (< -35 dBFS) suggests a weak/noisy recording (mic too far,
+    # low gain); very loud/clipped (> -3 dBFS) suggests distortion.
+    if loudness_db is None:
+        quality_note = "silent or unreadable audio"
+    elif loudness_db < -35:
+        quality_note = "quiet — possible low mic gain or background noise"
+    elif loudness_db > -3:
+        quality_note = "very loud — possible clipping/distortion"
+    else:
+        quality_note = "acceptable levels"
+
+    return duration_sec, sample_rate_khz, bitrate, loudness_db, quality_note
+
+
+# =============================================================================
+# DB linking — find existing person by phone, or create a new one
+# =============================================================================
+
+def get_or_create_person(conn, name, phone):
+    row = conn.execute("SELECT person_id FROM person WHERE phone = ?", (phone,)).fetchone()
+    if row:
+        return row["person_id"]
+
+    cur = conn.execute(
+        "INSERT INTO person (canonical_name, phone, match_confidence) VALUES (?, ?, 'new_from_audio_app')",
+        (name, phone)
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def save_submission(conn, person_id, filepath, duration, sample_rate, bitrate, loudness):
+    conn.execute("""
+        INSERT INTO audio_submission
+            (person_id, file_path, duration_sec, sample_rate_khz, bitrate, loudness_db)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (person_id, filepath, duration, sample_rate, bitrate, loudness))
+    conn.commit()
+
+
+# =============================================================================
+# Frontend (your existing HTML/CSS/JS — unchanged)
+# =============================================================================
+
+HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ConsultBae Audio Collection</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Arial, Helvetica, sans-serif;
+  background: radial-gradient(circle at 10% 10%, rgba(255,126,95,0.20), transparent 30%),
+              radial-gradient(circle at 90% 20%, rgba(124,92,255,0.20), transparent 30%),
+              linear-gradient(135deg, #faf7ff, #fff7f3);
+  color: #29233f; min-height: 100vh; }
+.navbar { background: linear-gradient(135deg, #5b3cc4, #7b4ce2); color: white;
+  padding: 18px 40px; display: flex; justify-content: space-between; align-items: center;
+  box-shadow: 0 4px 20px rgba(91,60,196,0.25); }
+.logo { font-size: 21px; font-weight: 800; letter-spacing: -0.5px; }
+.nav-link { color: white; text-decoration: none; font-size: 14px; padding: 8px 14px;
+  border-radius: 20px; background: rgba(255,255,255,0.15); transition: 0.2s; }
+.nav-link:hover { background: rgba(255,255,255,0.25); }
+.page { max-width: 800px; margin: 55px auto; padding: 0 20px; }
+.header { margin-bottom: 30px; text-align: center; }
+.header h1 { margin-bottom: 10px; font-size: 36px; font-weight: 800; letter-spacing: -1px;
+  background: linear-gradient(90deg, #5b3cc4, #e85d75); -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent; }
+.header p { color: #756d86; font-size: 16px; }
+.card { background: rgba(255,255,255,0.92); padding: 32px; border-radius: 20px;
+  border: 1px solid rgba(123,76,226,0.10); box-shadow: 0 15px 45px rgba(67,43,115,0.12);
+  backdrop-filter: blur(10px); }
+.form-group { margin-bottom: 22px; }
+label { display: block; font-weight: 700; margin-bottom: 8px; color: #40365c; }
+input[type="text"], input[type="tel"] { width: 100%; padding: 14px; border: 1px solid #ddd5ec;
+  border-radius: 10px; font-size: 15px; background: #fcfbff; color: #29233f; transition: 0.2s; }
+input[type="text"]:focus, input[type="tel"]:focus { outline: none; border-color: #7b4ce2;
+  box-shadow: 0 0 0 4px rgba(123,76,226,0.10); }
+.record-section { border: 1px solid #e5dcf7; background: linear-gradient(135deg,#faf7ff,#fff9f7);
+  border-radius: 16px; padding: 25px; text-align: center; margin-top: 25px; }
+.record-section h3 { margin-top: 0; color: #4d3b83; font-size: 20px; }
+.record-section p { color: #817894; font-size: 14px; }
+button { border: none; border-radius: 10px; padding: 13px 22px; font-size: 15px; cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s; }
+button:hover { transform: translateY(-1px); }
+#recordButton { background: linear-gradient(135deg,#7b4ce2,#9b5de5); color: white;
+  box-shadow: 0 6px 18px rgba(123,76,226,0.25); }
+#stopButton { background: linear-gradient(135deg,#ef5b6f,#f47c68); color: white; display: none;
+  box-shadow: 0 6px 18px rgba(239,91,111,0.25); }
+.timer { font-size: 30px; font-weight: 800; margin: 16px 0; color: #5b3cc4;
+  font-variant-numeric: tabular-nums; }
+.divider { display: flex; align-items: center; gap: 15px; margin: 28px 0; color: #9b91aa;
+  font-size: 13px; font-weight: bold; }
+.divider::before, .divider::after { content: ""; height: 1px;
+  background: linear-gradient(90deg, transparent, #ddd3ec); flex: 1; }
+.divider::after { background: linear-gradient(90deg, #ddd3ec, transparent); }
+.upload-section { padding: 10px 0; }
+input[type="file"] { width: 100%; padding: 13px; border: 2px dashed #d8cbed; border-radius: 10px;
+  background: #fbf9ff; color: #756d86; cursor: pointer; }
+input[type="file"]:hover { border-color: #9b7ce5; background: #f8f4ff; }
+audio { width: 100%; margin-top: 18px; border-radius: 10px; }
+.submit-button { width: 100%; background: linear-gradient(135deg,#ff6b5f,#f05278); color: white;
+  margin-top: 25px; font-weight: 800; font-size: 16px; padding: 15px;
+  box-shadow: 0 8px 22px rgba(240,82,120,0.25); }
+.submit-button:hover { box-shadow: 0 10px 28px rgba(240,82,120,0.35); }
+#status { text-align: center; margin-top: 18px; font-weight: bold; font-size: 14px; }
+.success { color: #169b62; }
+.error { color: #dc3d57; }
+</style>
+</head>
+<body>
+<div class="navbar">
+  <div class="logo">ConsultBae</div>
+  <a href="/submissions" class="nav-link">View Submissions</a>
+</div>
+<div class="page">
+  <div class="header">
+    <h1>Audio Collection</h1>
+    <p>Submit your information and an audio recording.</p>
+  </div>
+  <div class="card">
+    <form id="audioForm">
+      <div class="form-group">
+        <label for="name">Name</label>
+        <input type="text" id="name" placeholder="Enter your full name" required>
+      </div>
+      <div class="form-group">
+        <label for="phone">Phone Number</label>
+        <input type="tel" id="phone" placeholder="Enter your phone number" required>
+      </div>
+      <div class="record-section">
+        <h3>Record Audio</h3>
+        <p>Click the button below and allow microphone access.</p>
+        <div class="timer" id="timer">00:00</div>
+        <button type="button" id="recordButton">🎙 Start Recording</button>
+        <button type="button" id="stopButton">⏹ Stop Recording</button>
+        <audio id="audioPreview" controls style="display:none;"></audio>
+      </div>
+      <div class="divider">OR</div>
+      <div class="upload-section">
+        <label for="audioFile">Upload Audio File</label>
+        <input type="file" id="audioFile" accept="audio/*">
+      </div>
+      <button type="submit" class="submit-button">Submit Audio</button>
+      <div id="status"></div>
+    </form>
+  </div>
+</div>
+<script>
+let mediaRecorder = null, audioChunks = [], recordedBlob = null;
+let timerInterval = null, recordingSeconds = 0;
+const recordButton = document.getElementById("recordButton");
+const stopButton = document.getElementById("stopButton");
+const audioPreview = document.getElementById("audioPreview");
+const audioFile = document.getElementById("audioFile");
+const timer = document.getElementById("timer");
+const form = document.getElementById("audioForm");
+const status = document.getElementById("status");
+
+function updateTimer() {
+  const m = Math.floor(recordingSeconds/60).toString().padStart(2,"0");
+  const s = (recordingSeconds%60).toString().padStart(2,"0");
+  timer.innerText = m+":"+s;
+}
+
+recordButton.addEventListener("click", async function() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = []; recordedBlob = null;
+    mediaRecorder.ondataavailable = e => { if (e.data.size>0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = function() {
+      recordedBlob = new Blob(audioChunks, {type:"audio/webm"});
+      audioPreview.src = URL.createObjectURL(recordedBlob);
+      audioPreview.style.display = "block";
+      stream.getTracks().forEach(t=>t.stop());
+    };
+    mediaRecorder.start();
+    recordingSeconds = 0; updateTimer();
+    timerInterval = setInterval(()=>{recordingSeconds++; updateTimer();}, 1000);
+    recordButton.style.display = "none";
+    stopButton.style.display = "inline-block";
+    status.innerText = "Recording..."; status.className = "";
+  } catch(error) {
+    status.innerText = "Microphone permission was denied.";
+    status.className = "error";
+  }
+});
+
+stopButton.addEventListener("click", function() {
+  if (mediaRecorder) mediaRecorder.stop();
+  clearInterval(timerInterval);
+  recordButton.style.display = "inline-block";
+  stopButton.style.display = "none";
+  status.innerText = "Recording ready."; status.className = "success";
+});
+
+audioFile.addEventListener("change", function() {
+  if (this.files.length > 0) {
+    recordedBlob = null;
+    audioPreview.src = URL.createObjectURL(this.files[0]);
+    audioPreview.style.display = "block";
+    status.innerText = "Audio file selected."; status.className = "success";
+  }
+});
+
+form.addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const name = document.getElementById("name").value.trim();
+  const phone = document.getElementById("phone").value.trim();
+  const uploadedFile = audioFile.files[0];
+
+  if (!name || !phone) {
+    status.innerText = "Please enter your name and phone number.";
+    status.className = "error"; return;
+  }
+  if (!uploadedFile && !recordedBlob) {
+    status.innerText = "Please record or upload an audio file.";
+    status.className = "error"; return;
+  }
+
+  const formData = new FormData();
+  formData.append("name", name);
+  formData.append("phone", phone);
+  if (uploadedFile) formData.append("audio", uploadedFile);
+  else formData.append("audio", recordedBlob, "recording.webm");
+
+  status.innerText = "Submitting..."; status.className = "";
+
+  try {
+    const response = await fetch("/upload", {method:"POST", body: formData});
+    const result = await response.json();
+    if (result.success) {
+      status.innerText = "✓ Audio submitted successfully. " +
+        "Duration: " + result.duration + "s, " +
+        result.sample_rate + "kHz, " +
+        result.loudness + "dB (" + result.quality + ")";
+      status.className = "success";
+      form.reset();
+      audioPreview.style.display = "none";
+      recordedBlob = null;
+      recordingSeconds = 0; updateTimer();
+    } else {
+      status.innerText = result.message || "Submission failed.";
+      status.className = "error";
+    }
+  } catch(error) {
+    status.innerText = "Could not connect to the server.";
+    status.className = "error";
+  }
+});
+</script>
+</body>
+</html>
+"""
+
+
+# =============================================================================
+# Routes
+# =============================================================================
+
+@app.route("/")
+def home():
+    return render_template_string(HTML)
+
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    name = request.form.get("name")
+    phone = request.form.get("phone")
+    audio_file = request.files.get("audio")
+
+    if not name or not phone or not audio_file:
+        return jsonify({"success": False, "message": "Missing required information."}), 400
+
+    # save the raw audio file to disk
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
+    safe_filename = f"{timestamp}_{phone}.webm"
+    filepath = os.path.join(UPLOAD_DIR, safe_filename)
+    audio_file.save(filepath)
+
+    # extract required properties
+    try:
+        duration, sample_rate, bitrate, loudness, quality_note = extract_audio_properties(filepath)
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Could not process audio file: {e}"
+        }), 500
+
+    # link to (or create) a person, and store the submission
+    try:
+        conn = get_db_connection()
+        person_id = handle_submission(conn, name, phone, filepath, duration, sample_rate, bitrate, loudness)
+        conn.close()
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Database error: {e}"
+        }), 500
+
+    return jsonify({
+        "success": True,
+        "duration": duration,
+        "sample_rate": sample_rate,
+        "bitrate": bitrate,
+        "loudness": loudness,
+        "quality": quality_note
+    })
+
+
+@app.route("/audio/<path:filename>")
+def serve_audio(filename):
+    return send_from_directory(UPLOAD_DIR, filename)
+
+
+@app.route("/submissions")
+def submissions():
+    conn = get_db_connection()
+    rows = conn.execute("""
+        SELECT
+            a.id, a.file_path, a.duration_sec, a.sample_rate_khz,
+            a.bitrate, a.loudness_db, a.submitted_at,
+            p.canonical_name, p.phone
+        FROM audio_submission a
+        JOIN person p ON a.person_id = p.person_id
+        ORDER BY a.submitted_at DESC
+    """).fetchall()
+    conn.close()
+
+    rows_html = ""
+    for r in rows:
+        filename = os.path.basename(r["file_path"])
+        rows_html += f"""
+        <tr>
+            <td>{r['canonical_name']}</td>
+            <td>{r['phone']}</td>
+            <td><audio controls src="/audio/{filename}"></audio></td>
+            <td>{r['duration_sec']}s</td>
+            <td>{r['sample_rate_khz']} kHz</td>
+            <td>{r['bitrate']} bps</td>
+            <td>{r['loudness_db']} dB</td>
+            <td>{r['submitted_at']}</td>
+        </tr>
+        """
+
+    return f"""
+    <html>
+    <head>
+        <title>Submissions</title>
+        <style>
+            body {{ font-family: Arial; padding: 40px; background: #f5f5f5; }}
+            table {{ width: 100%; border-collapse: collapse; background: white; }}
+            th, td {{ padding: 10px; border-bottom: 1px solid #ddd; text-align: left; font-size: 13px; }}
+            th {{ background: #5b3cc4; color: white; }}
+            audio {{ width: 200px; height: 32px; }}
+            a {{ color: #2563eb; }}
+        </style>
+    </head>
+    <body>
+        <h1>Submissions ({len(rows)})</h1>
+        <p><a href="/">← Back to submission page</a></p>
+        <table>
+            <tr>
+                <th>Name</th><th>Phone</th><th>Audio</th><th>Duration</th>
+                <th>Sample Rate</th><th>Bitrate</th><th>Loudness</th><th>Submitted</th>
+            </tr>
+            {rows_html}
+        </table>
+    </body>
+    </html>
+    """
+
+
+@app.route("/db-test")
+def db_test():
+    try:
+        conn = get_db_connection()
+        person_count = conn.execute("SELECT COUNT(*) FROM person").fetchone()[0]
+        source_count = conn.execute("SELECT COUNT(*) FROM person_source_record").fetchone()[0]
+        skill_count = conn.execute("SELECT COUNT(*) FROM skill").fetchone()[0]
+        submission_count = conn.execute("SELECT COUNT(*) FROM audio_submission").fetchone()[0]
+        conn.close()
+        return f"""
+        <h1>Database Connected ✓</h1>
+        <p>People: {person_count}</p>
+        <p>Source records: {source_count}</p>
+        <p>Skills: {skill_count}</p>
+        <p>Audio submissions: {submission_count}</p>
+        """
+    except Exception as e:
+        return f"<h1>Database Error</h1><pre>{repr(e)}</pre>", 500
+
+
+print("Website code loaded.")
+
+from threading import Thread
+
+def run_app():
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=False,
+        use_reloader=False
+    )
+
+server_thread = Thread(target=run_app)
+server_thread.start()
+
+!pip install -q pyngrok
+
+from google.colab import userdata
+from pyngrok import ngrok
+
+# Get token securely from Colab Secrets
+ngrok_token = userdata.get("Website_token")
+
+# Authenticate ngrok
+ngrok.set_auth_token(ngrok_token)
+
+# Create public tunnel
+public_url = ngrok.connect(5000)
+
+print("YOUR WEBSITE:")
+print(public_url)
+
+conn = sqlite3.connect('/content/consultbae.db')
+cur = conn.cursor()
+cur.execute("""
+    SELECT p.canonical_name, p.phone, a.duration_sec, a.loudness_db
+    FROM audio_submission a JOIN person p ON a.person_id = p.person_id
+    ORDER BY a.id DESC LIMIT 1
+""")
+print(cur.fetchone())
+conn.close()
+
+conn = sqlite3.connect('/content/consultbae.db')
+cur = conn.cursor()
+cur.execute("SELECT COUNT(*) FROM person")
+print("Total people:", cur.fetchone()[0])
+cur.execute("SELECT COUNT(*) FROM audio_submission")
+print("Total audio submissions:", cur.fetchone()[0])
+conn.close()
+
+from google.colab import drive
+drive.mount('/content/drive')
+
+import shutil
+shutil.copy('/content/consultbae.db', '/content/drive/MyDrive/consultbae_assignment/consultbae_with_audio_table.db')
+print("Saved to Drive.")
+
+conn = sqlite3.connect('/content/drive/MyDrive/consultbae_assignment/consultbae_with_audio_table.db')
+cur = conn.cursor()
+
+# find and remove the test person + their submission
+cur.execute("SELECT person_id FROM person WHERE canonical_name = 'John Doe' AND phone = '9876543210'")
+row = cur.fetchone()
+if row:
+    person_id = row[0]
+    cur.execute("DELETE FROM audio_submission WHERE person_id = ?", (person_id,))
+    cur.execute("DELETE FROM person WHERE person_id = ?", (person_id,))
+    conn.commit()
+    print(f"Removed test person {person_id} and their submission.")
+
+cur.execute("SELECT COUNT(*) FROM person")
+print("Person count now:", cur.fetchone()[0])  # should be back to 55
+conn.close()
