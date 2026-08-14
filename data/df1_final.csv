@@ -1,0 +1,42 @@
+norm_name,norm_email,norm_phone,norm_city,norm_applied_date,norm_ctc,Skills,Experience (Years),dedup_group_id
+Nikhil Malhotra,nikhil.malhotra41@example.in,9000000145,delhi,2026-08-21,510000,"fastapi, javascript, web scraping, sql, python",4.2,0
+Sahil Malhotra,sahil.malhotra1@example.in,9000000143,noida,2026-07-13,806661,"fastapi, docker, mysql, zapier, pandas, rest apis",1.7,1
+Rahul Malhotra,rahul.malhotra69@mailtest.example.org,9000000260,delhi,2026-07-03,864237,"mysql, rest apis, sql, mongodb, selenium",2.5,2
+Nikhil Chopra,alt.nikhil.chopra70@example.com,9000000103,noida,2026-07-03,780000,"pandas, sql, n8n",0.8,3
+Tanvi Agarwal,tanvi.agarwal97@example.in,9000000148,pune,2026-07-27,626740,"mongodb, rest apis, fastapi, web scraping",5.0,4
+Nikhil Chopra,nikhil.chopra70@example.com,9000000103,noida,2026-07-03,780000,"pandas, sql, n8n",0.8,3
+Vikram Saxena,vikram.saxena60@example.com,9000000113,gurgaon,2026-07-07,654699,"selenium, web scraping, react, docker, sql, fastapi",1.9,6
+Rohit Mishra,rohit.mishra70@mailtest.example.org,9000000167,delhi,2026-07-13,871686,"docker, pandas, fastapi, sql, zapier, mysql",4.4,7
+Amit Agarwal,amit.agarwal3@mailtest.example.org,9000000288,pune,2026-07-19,420000,"sql, python, javascript, docker",1.8,8
+Manish Reddy,manish.reddy73@example.com,9000000237,gurgaon,2026-08-08,332456,"docker, zapier, javascript",3.5,9
+Arjun Bhatia,arjun.bhatia14@example.com,9000000212,delhi,2026-06-02,621881,"zapier, rest apis, sql, fastapi, pandas, web scraping",1.5,10
+Deepak Singh,deepak.singh36@mailtest.example.org,9000000202,bangalore,2026-08-11,1135514,"web scraping, fastapi, docker, react",1.7,11
+Nikhil Mehta,nikhil.mehta5@example.com,9000000104,pune,2026-07-26,930000,"docker, langchain, zapier, selenium, python, react",2.9,12
+Rahul Chopra,rahul.chopra70@example.com,9000000137,noida,2026-07-27,270000,"zapier, docker, python",1.7,13
+Shreya Gupta,shreya.gupta85@example.com,9000000227,noida,2026-07-19,830000,"zapier, web scraping, docker, n8n, python",3.3,14
+Sneha Mishra,sneha.mishra14@mailtest.example.org,9000000229,pune,2026-06-15,410629,"mysql, docker, selenium, pandas",1.4,15
+Meera Bhatia,meera.bhatia52@mailtest.example.org,9000000223,delhi,2026-07-03,1120000,"langchain, docker, mysql, python, sql, react",5.1,16
+Karan Bhatia,karan.bhatia32@mailtest.example.org,9000000211,noida,2026-07-08,826748,"sql, mongodb, selenium, zapier, web scraping, javascript",4.7,17
+Sneha Chopra,sneha.chopra99@example.in,9000000162,pune,2026-07-03,1000000,"pandas, react, mysql, javascript, sql",4.9,18
+Gaurav Mehta,gaurav.mehta79@mailtest.example.org,9000000133,bangalore,2026-07-19,792474,"rest apis, sql, selenium, fastapi",3.1,19
+Deepak Mehta,deepak.mehta86@example.in,9000000116,noida,2026-07-23,327287,"mysql, mongodb, n8n, langchain, rest apis, selenium",2.7,20
+Arjun Mishra,arjun.mishra70@example.com,9000000106,delhi,2026-08-22,580000,"react, docker, javascript",1.3,21
+Varun Saxena,varun.saxena21@example.in,9000000170,gurgaon,2026-07-05,775796,"mongodb, zapier, sql, langchain, mysql, rest apis",3.7,22
+Priya Saxena,priya.saxena61@example.com,9000000231,delhi,2026-08-16,660000,"python, mysql, zapier, react",5.0,23
+Priya Singh,priya.singh61@mailtest.example.org,9000000287,gurgaon,2026-08-01,775670,"react, zapier, n8n, mysql, python, sql",3.0,24
+Tanvi Gupta,tanvi.gupta31@example.com,9000000254,bangalore,2026-07-24,417964,"n8n, langchain, rest apis, mongodb, sql",4.2,25
+Neha Bhatia,neha.bhatia60@mailtest.example.org,9000000273,pune,2026-07-22,694306,"fastapi, zapier, javascript, selenium",4.2,26
+Isha Chopra,isha.chopra95@mailtest.example.org,9000000138,pune,2026-08-02,472935,"react, javascript, mysql",5.4,27
+Rohit Verma,rohit.verma13@mailtest.example.org,9000000294,bangalore,2026-08-13,610000,"python, react, mongodb",2.4,28
+Isha Sharma,isha.sharma15@example.com,9000000259,delhi,2026-07-12,1030000,"n8n, python, selenium, javascript, rest apis, mongodb",3.5,29
+Kavya Mehta,kavya.mehta7@example.com,9000000177,bangalore,2026-07-02,240000,"n8n, mongodb, fastapi, pandas, react",5.1,30
+Ritu Sharma,ritu.sharma23@mailtest.example.org,9000000146,noida,2026-08-03,610000,"n8n, web scraping, mongodb, sql, react",4.8,31
+Arjun Mehta,arjun.mehta9@example.in,9000000131,noida,2026-07-21,1181149,"sql, selenium, n8n",4.0,32
+Pooja Gupta,pooja.gupta57@mailtest.example.org,9000000271,noida,2026-06-24,1190000,"docker, mysql, sql, n8n, selenium",3.9,33
+Deepak Nair,deepak.nair44@example.com,9000000296,bangalore,2026-07-15,1160787,"react, n8n, mongodb, pandas",5.0,34
+Isha Kapoor,isha.kapoor54@example.com,9000000295,delhi,2026-08-21,590000,"fastapi, python, javascript, selenium, react, mysql",5.1,35
+Priya Nair,priya.nair70@example.com,9000000222,gurgaon,2026-07-28,366311,"zapier, rest apis, react, python, n8n, web scraping",5.6,36
+Rahul Jain,rahul.jain34@example.in,9000000114,noida,2026-06-24,1195422,"zapier, selenium, docker, python",2.8,37
+Rohit Nair,rohit.nair32@mailtest.example.org,9000000268,gurgaon,2026-08-19,760000,"rest apis, n8n, web scraping, docker",2.4,38
+Varun Jain,varun.jain29@example.com,9000000263,pune,2026-08-19,760000,"n8n, web scraping, fastapi, mysql, pandas, mongodb",3.1,39
+Amit Reddy,amit.reddy9@mailtest.example.org,9000000165,delhi,2026-07-21,1140000,"react, mysql, langchain",2.7,40
