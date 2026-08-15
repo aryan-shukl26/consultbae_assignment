@@ -119,13 +119,6 @@ A second view (`/submissions`) lists every submission with a working audio playe
 
 See [`reports/data_issues_report.md`](reports/data_issues_report.md) — a full, specific accounting of every data quality problem found across the 3 source files (inconsistent formats, exact and near-duplicates, malformed rows, ambiguous same-name records, unit inconsistencies) and exactly what was done about each.
 
-## Task 5 — Stretch: Scaling to 5,000 Workers
-
-See [`reports/task5_scaling_considerations.md`](reports/task5_scaling_considerations.md) for the full write-up. Short version: the current architecture (SQLite, local file storage, a single Flask process) is a prototype, not a launch-ready system — SQLite's single-writer lock and local disk storage would be the first things to break under concurrent load from thousands of workers in one weekend.
-
-## Stuck Log
-
-See [`STUCK_LOG.md`](STUCK_LOG.md) for the hardest problems hit during this assignment and exactly how each was resolved — including a malformed-row detection bug, a data-integrity verification step, a GitHub credential exposure incident, and a silent partial-database-write bug in the audio app.
 
 ## Status
 
@@ -135,8 +128,6 @@ See [`STUCK_LOG.md`](STUCK_LOG.md) for the hardest problems hit during this assi
 - [x] Task 3 — audio collection app (recording/upload, property extraction, DB linking, submissions view)
 - [x] Task 4 — data issues report
 - [x] Task 5 — stretch (scaling considerations)
-- [ ] Screen recording
-
 
 
 ## Stuck log:
