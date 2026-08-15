@@ -2,101 +2,126 @@
 
 ## Overview
 
-This repo merges 3 messy CSVs (Naukri job applicants, gig workers, CBNexus contacts) into a single clean database, with the same person appearing across multiple files resolved into one record — plus a no-code automation, a mini audio collection app, and supporting documentation.
+This repo merges 3 messy CSVs (Naukri job applicants, gig workers, CBNexus contacts) into a single unified database, resolving the same person appearing across multiple files into one record. On top of that database sits a no-code LLM automation that auto-classifies each person's skill category, and a mini web app for collecting audio submissions with automatic property extraction.
 
 ## Project structure
 
 ```
 .
 ├── data/
-│   ├── df1_final.csv          # cleaned & normalized source1 (Naukri applicants)
-│   ├── df2_final.csv          # cleaned & normalized source2 (gig workers)
-│   ├── df3_final.csv          # cleaned & normalized source3 (CBNexus contacts)
-│   └── consultbae.db          # unified SQLite database (person, skill, audio_submission, etc.)
+│   ├── df1_final.csv                   # cleaned & normalized source1 (Naukri applicants)
+│   ├── df2_final.csv                   # cleaned & normalized source2 (gig workers)
+│   ├── df3_final.csv                   # cleaned & normalized source3 (CBNexus contacts)
+│   └── consultbae.db                   # unified SQLite database
 ├── notebooks/
-│   ├── task1_consultbae.py           # source loading, normalization, per-file dedup
-│   ├── build_unified_database.py     # cross-file matching cascade -> unified person table
-│   └── task3_audio_app.py            # Flask audio collection app
+│   └── task1_task3_consolidated.py     # Tasks 1 & 3: cleaning, unified DB build, verification, audio app
 ├── reports/
-│   └── data_issues_report.md  # Task 4 — full data quality findings & resolutions
-├── STUCK_LOG.md                # hardest debugging moments & how they were resolved
-└── README.md                   # this file
+│   ├── data_issues_report.md           # Task 4 — full data quality findings & resolutions
+│   ├── task2_make_scenario.json        # Task 2 — exported Make.com automation blueprint
+│   └── task5_scaling_considerations.md # Task 5 — stretch: scaling to 5,000 workers
+├── STUCK_LOG.md                         # hardest debugging moments & how they were resolved
+└── README.md                            # this file
 ```
-
-*(Structure will grow as Task 2's no-code automation flow export is added.)*
 
 ## Setup
 
 ### Requirements
 - Python 3.10+
-- pandas
-- rapidfuzz
+- pandas, rapidfuzz, flask, pydub
+- ffmpeg (system dependency, required by pydub for audio decoding)
 
 ```bash
-pip install pandas rapidfuzz
+pip install pandas rapidfuzz flask pydub
+# ffmpeg must also be installed and on PATH
 ```
 
-### Running the Task 1 pipeline
+### Running the pipeline (Tasks 1 & 3)
 
-The pipeline was built and run in Google Colab, reading from CSVs mounted via Google Drive. To run locally instead:
-
-1. Clone this repo
-2. Place the 3 raw source CSVs in the same directory as the script (or update the file paths at the top of `notebooks/task1_consultbae.py`)
-3. Run:
-```bash
-python notebooks/task1_consultbae.py
-```
-This produces the 3 cleaned dataframes found in `data/`.
-
-4. Then run the matching cascade to build the unified database:
-```bash
-python notebooks/build_unified_database.py
-```
-This produces `data/consultbae.db` — the unified `person` table plus `person_source_record`, `skill`, and `audio_submission`.
-
-### Running the Task 3 audio app
+Task 1 (data merge) and Task 3 (audio app) were consolidated into a single notebook/script sharing one database and one runtime, after repeatedly hitting sync issues from running them in separate Colab sessions with separately-copied `.db` files (see `STUCK_LOG.md`).
 
 ```bash
-pip install pydub flask
-# ffmpeg must also be installed and on PATH (pydub depends on it)
-python notebooks/task3_audio_app.py
+python notebooks/task1_task3_consolidated.py
 ```
-The app was developed and demoed in Colab using an `ngrok` tunnel for a public URL; see the script for the tunnel setup if running there instead of locally.
+
+Run top to bottom in one session. This:
+1. Loads and cleans all 3 source CSVs
+2. Runs the tiered matching cascade to merge them into one `person` table
+3. Builds `consultbae.db` with the full schema (Task 1 tables + Task 3's `audio_submission` table together)
+4. Runs a built-in verification pass that asserts data integrity and prints a pass/fail banner
+5. Starts the Flask audio collection app against that same database, in the same runtime
+
+Once running:
+- `/` — submission form (name, phone, record or upload audio)
+- `/submissions` — list of all submissions with playback and extracted properties
+- `/db-test` — quick health check confirming DB connectivity and row counts
+
+### Running Task 2 — the automation
+
+The automation (Make.com) is not code you run locally — it's a hosted scenario that calls two API endpoints exposed by the Flask app above. To re-run it:
+1. Start the app (above) and note its public ngrok URL
+2. Open the scenario in Make.com (or re-import [`reports/task2_make_scenario.json`](reports/task2_make_scenario.json) as a new scenario)
+3. Update the two Flask HTTP modules' URLs to match your current ngrok URL if it's changed
+4. Run the scenario
+
+See [Task 2](#task-2--no-code-automation) below for the full design.
 
 ## Task 1 — Data Merge
 
-Full methodology and matching strategy:
-- **Email** is the primary match key between source1 (Naukri) and source2 (gig workers)
-- **Phone** is the primary match key between source1/source2 and source3 (CBNexus), which has no email field
-- **Fuzzy name + city matching** is used as a fallback for records that don't share an email or phone with anything already on file — but only when the candidate's email/phone don't actively conflict with what's already on record. Two people can share a name; if their contact details disagree, they're kept as separate records and flagged `manual_review` rather than force-merged.
-- A final consolidation pass groups any remaining same-name/same-city entries and merges only the subsets with no internal conflicts
+**Matching strategy** (tiered, in order of certainty):
+- **Tier 1 — exact match**: email between source1 (Naukri) and source2 (gig workers); phone between source1/source2 and source3 (CBNexus), which has no email field
+- **Tier 2 — fuzzy name+city fallback**: for anyone left unmatched, name+city similarity is used, but only accepted if the candidate's email/phone don't actively conflict with what's already on record. Two people can share a name — if their contact details disagree, they're kept as separate records and flagged `manual_review` rather than force-merged
+- **Tier 3 — confidence tagging**: every person record carries `match_confidence` (`high` / `medium` / `manual_review`) so merge certainty is visible, not hidden
+- **Tier 4 — consolidation pass**: a final union-find grouping catches any remaining same-name/same-city duplicates, merging only the subsets with no internal conflicts
 
-Every person record carries a `match_confidence` (`high` / `medium` / `manual_review`) so merge certainty is visible, not hidden. Final result: **55 unique people** merged across all 3 sources, with 2 confirmed same-name-different-person cases correctly kept separate.
+**Result**: 55 unique people merged across all 3 sources, with 2 confirmed same-name-different-person cases (Arjun Mehta, Deepak Nair) correctly kept separate rather than wrongly merged.
 
-See [`reports/data_issues_report.md`](reports/data_issues_report.md) for the full list of data quality issues found in each source file and how each was resolved.
+**Built-in verification**: the pipeline ends with an assertion-based check that reopens the database from disk and confirms table presence, person/skill counts, no duplicate skill rows, the two known ambiguous cases are still separate, CTC values are stored as real numbers (not corrupted by a numpy-type serialization bug hit during development), and no orphaned foreign keys — before printing a final pass/fail banner. If anything is wrong, the script throws rather than silently reporting success.
+
+See [`reports/data_issues_report.md`](reports/data_issues_report.md) for the full list of data quality issues found in each source file and exactly how each was resolved.
 
 ## Task 2 — No-code Automation
 
-*(Not yet started)*
+**Tool used**: Make.com (free tier — no card required, unlike n8n Cloud's trial signup, and no self-hosting overhead compared to n8n Community Edition).
+
+**What it does**: reads every person in the database without a `skill_category`, asks an LLM to classify their skills into one of `automation-heavy` / `web dev` / `data` / `other`, and writes the result back — the "LLM auto-tag" option from the assignment brief.
+
+**Architecture**:
+```
+Make.com (cloud) ──public internet──> ngrok tunnel ──> Flask app (port 5000)
+                                                              │
+                                                    reads/writes consultbae.db
+```
+Make.com is a fully hosted service and can't reach a local database directly, so the Flask app was extended with two small API endpoints as a bridge:
+- `GET /api/untagged-people` — returns people with no `skill_category` yet, plus their combined skill list
+- `POST /api/tag-person` — receives `{person_id, category}` and writes it to the database
+
+**Scenario flow** (5 modules, exported to [`reports/task2_make_scenario.json`](reports/task2_make_scenario.json)):
+1. **HTTP** — `GET /api/untagged-people`
+2. **Iterator** — processes one person at a time
+3. **Sleep (3s)** — throttles requests to stay under Groq's free-tier rate limit (30 requests/minute)
+4. **HTTP** — `POST` to Groq's chat completion API, prompting classification based on the person's skills
+5. **HTTP** — `POST /api/tag-person` with the returned category
+
+**Result**: all 55 people successfully classified — 30 `web dev`, 15 `automation-heavy`, 10 `data` — verified directly against the database after the run, not just trusted from Make's UI.
 
 ## Task 3 — Audio Collection App
 
-A Flask app (`notebooks/task3_audio_app.py`) where a person enters their name and phone number, then either records audio directly in the browser or uploads a file. On submission:
+A Flask app where a person enters their name and phone number, then either records audio directly in the browser or uploads a file. On submission:
 - The audio file is saved to disk
 - Duration, sample rate (kHz), bitrate, and loudness (dB) are extracted using `pydub`
 - A rough quality estimate is derived from the loudness reading (flags unusually quiet or clipped recordings)
-- The submitter is matched to an existing `person` record by phone number, or a new one is created if they weren't in any of the original 3 source files
-- The submission is linked to that person and stored in `audio_submission`
+- The submitter is matched to an existing `person` record by phone number, or a new one is created if they weren't present in any of the original 3 source files
+- The submission is linked to that person and stored in `audio_submission`, as a single atomic transaction (a two-step version of this caused a real bug during development — see `STUCK_LOG.md`)
 
 A second view (`/submissions`) lists every submission with a working audio player and the extracted properties.
 
 ## Task 4 — Data Issues Report
 
-See [`reports/data_issues_report.md`](reports/data_issues_report.md).
+See [`reports/data_issues_report.md`](reports/data_issues_report.md) — a full, specific accounting of every data quality problem found across the 3 source files (inconsistent formats, exact and near-duplicates, malformed rows, ambiguous same-name records, unit inconsistencies) and exactly what was done about each.
 
-## Task 5 — Stretch: Scaling to 5,000 workers
+## Task 5 — Stretch: Scaling to 5,000 Workers
 
-*(Not yet started)*
+See [`reports/task5_scaling_considerations.md`](reports/task5_scaling_considerations.md) for the full write-up. Short version: the current architecture (SQLite, local file storage, a single Flask process) is a prototype, not a launch-ready system — SQLite's single-writer lock and local disk storage would be the first things to break under concurrent load from thousands of workers in one weekend.
 
 ## Stuck Log
 
@@ -105,9 +130,9 @@ See [`STUCK_LOG.md`](STUCK_LOG.md) for the hardest problems hit during this assi
 ## Status
 
 - [x] Task 1 — source cleaning, normalization, and per-file dedup (all 3 sources)
-- [x] Task 1 — cross-file matching cascade → unified `person` table in SQLite (55 people)
-- [ ] Task 2 — no-code automation
+- [x] Task 1 — cross-file matching cascade → unified `person` table in SQLite (55 people, verified)
+- [x] Task 2 — no-code automation (Make.com, LLM skill-category auto-tagging)
 - [x] Task 3 — audio collection app (recording/upload, property extraction, DB linking, submissions view)
 - [x] Task 4 — data issues report
-- [ ] Task 5 — stretch (scaling considerations)
+- [x] Task 5 — stretch (scaling considerations)
 - [ ] Screen recording
