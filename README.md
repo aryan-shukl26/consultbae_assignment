@@ -95,7 +95,7 @@ Make.com is a fully hosted service and can't reach a local database directly, so
 - `GET /api/untagged-people` — returns people with no `skill_category` yet, plus their combined skill list
 - `POST /api/tag-person` — receives `{person_id, category}` and writes it to the database
 
-**Scenario flow** (5 modules, exported to [`reports/task2_make_scenario.json`](reports/task2_make_scenario.json)):
+**Scenario flow** (5 modules, exported to [`Integration HTTP.blueprint.json`](Integration HTTP.blueprint.json)):
 1. **HTTP** — `GET /api/untagged-people`
 2. **Iterator** — processes one person at a time
 3. **Sleep (3s)** — throttles requests to stay under Groq's free-tier rate limit (30 requests/minute)
