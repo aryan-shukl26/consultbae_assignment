@@ -136,3 +136,15 @@ See [`STUCK_LOG.md`](STUCK_LOG.md) for the hardest problems hit during this assi
 - [x] Task 4 — data issues report
 - [x] Task 5 — stretch (scaling considerations)
 - [ ] Screen recording
+
+
+
+## Stuck log:
+
+Task 2 
+1. It took the most amount time as it was new for me and a great learning experience. Secondly, Introducing a sleep element to the workflow proved crucial as it was earlier throwing up a timeout error for all 55 requests. introduing a sleep element helped us deal with this
+
+In Task 1:
+  Cleaning he messy data by considering all noises present in the data and treat it required a lot of attention to detail.
+In Task 3:
+  It took a lot of time to use ffmpeg and integrate audio processing elements as well, since audio processing was something i havent explored enough
